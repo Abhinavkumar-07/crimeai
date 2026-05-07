@@ -1,0 +1,184 @@
+name: CrimeAI CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Backend: lint + test ───────────────────────────────────────────────────
+  backend-test:
+    name: Backend (Python 3.11)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: crimeai
+          POSTGRES_PASSWORD: crimeai_ci
+          POSTGRES_DB: crimeai_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m spacy download en_core_web_sm
+
+      - name: Enable PostGIS + pgvector
+        env:
+          PGPASSWORD: crimeai_ci
+        run: |
+          psql -h localhost -U crimeai -d crimeai_test -c \
+            "CREATE EXTENSION IF NOT EXISTS postgis;
+             CREATE EXTENSION IF NOT EXISTS vector;
+             CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy app --ignore-missing-imports
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://crimeai:crimeai_ci@localhost:5432/crimeai_test
+          DATABASE_URL_SYNC: postgresql://crimeai:crimeai_ci@localhost:5432/crimeai_test
+          APP_ENV: test
+          JWT_SECRET_KEY: ci_jwt_secret_key_not_for_production
+          APP_SECRET_KEY: ci_app_secret_key_not_for_production
+        run: alembic upgrade head
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://crimeai:crimeai_ci@localhost:5432/crimeai_test
+          DATABASE_URL_SYNC: postgresql://crimeai:crimeai_ci@localhost:5432/crimeai_test
+          REDIS_URL: redis://localhost:6379/15
+          CELERY_BROKER_URL: redis://localhost:6379/14
+          CELERY_RESULT_BACKEND: redis://localhost:6379/13
+          APP_ENV: test
+          JWT_SECRET_KEY: ci_jwt_secret_key_not_for_production
+          APP_SECRET_KEY: ci_app_secret_key_not_for_production
+          DBSCAN_EPS: "0.5"
+          DBSCAN_MIN_SAMPLES: "3"
+          SPACY_MODEL: en_core_web_sm
+        run: |
+          pytest tests/ -v \
+            --cov=app --cov-report=xml \
+            --cov-report=term-missing \
+            -x
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+  # ── Frontend: lint + build ─────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend (Node 20)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        env:
+          VITE_API_URL: https://crimeai-api.onrender.com
+          VITE_WS_URL: wss://crimeai-api.onrender.com
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+
+  # ── Deploy to Render (main branch only) ────────────────────────────────────
+  deploy-backend:
+    name: Deploy → Render
+    needs: [backend-test, frontend-build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - name: Trigger Render deploy hook
+        run: |
+          curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" \
+            -H "Accept: application/json" \
+            -d '{}'
+        continue-on-error: false
+
+  # ── Deploy to Vercel (main branch only) ────────────────────────────────────
+  deploy-frontend:
+    name: Deploy → Vercel
+    needs: [backend-test, frontend-build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+
+      - name: Deploy to Vercel
+        run: |
+          npx vercel --token=${{ secrets.VERCEL_TOKEN }} \
+            --prod --yes \
+            --cwd frontend \
+            -e VITE_API_URL=https://crimeai-api.onrender.com \
+            -e VITE_WS_URL=wss://crimeai-api.onrender.com

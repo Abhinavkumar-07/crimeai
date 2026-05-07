@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CrimeAI — Render.com deployment blueprint
+# Deploy all backend services from one file
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  # ── FastAPI Web Service ─────────────────────────────────────────────────────
+  - type: web
+    name: crimeai-api
+    runtime: python
+    rootDir: backend
+    buildCommand: |
+      pip install -r requirements.txt &&
+      python -m spacy download en_core_web_sm
+    startCommand: |
+      alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crimeai-db
+          property: connectionString
+      - key: DATABASE_URL_SYNC
+        fromDatabase:
+          name: crimeai-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false   # Set manually from Upstash
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      - key: DOCS_ENABLED
+        value: "false"
+      - key: ALLOWED_ORIGINS
+        sync: false   # Set to your Vercel frontend URL
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  - type: worker
+    name: crimeai-worker
+    runtime: python
+    rootDir: backend
+    buildCommand: |
+      pip install -r requirements.txt &&
+      python -m spacy download en_core_web_sm
+    startCommand: >
+      celery -A app.workers.celery_app:celery_app worker
+      --loglevel=info --concurrency=2 --queues=default,ml,nlp
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crimeai-db
+          property: connectionString
+      - key: DATABASE_URL_SYNC
+        fromDatabase:
+          name: crimeai-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+
+  # ── Celery Beat Scheduler ────────────────────────────────────────────────────
+  - type: worker
+    name: crimeai-beat
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      celery -A app.workers.celery_app:celery_app beat
+      --loglevel=info
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+
+databases:
+  # ── PostgreSQL (Render free tier — use Supabase for production) ─────────────
+  - name: crimeai-db
+    databaseName: crimeai
+    user: crimeai
+    plan: free

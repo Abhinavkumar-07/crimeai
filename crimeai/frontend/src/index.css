@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  :root {
+    --scrollbar-thumb: #30363d;
+    --scrollbar-track: #0f1117;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar        { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track  { background: var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb  { background: var(--scrollbar-thumb); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+  /* Leaflet map dark mode overrides */
+  .leaflet-container {
+    background: #0f1117 !important;
+    font-family: 'Inter', sans-serif !important;
+  }
+  .leaflet-tile { filter: brightness(0.7) saturate(0.8) hue-rotate(180deg) invert(1); }
+  .leaflet-control-attribution { background: rgba(15,17,23,0.8) !important; color: #8b949e !important; }
+  .leaflet-control-zoom a {
+    background: #161b22 !important;
+    color: #e6edf3 !important;
+    border-color: #30363d !important;
+  }
+  .leaflet-control-zoom a:hover { background: #1c2128 !important; }
+  .leaflet-popup-content-wrapper {
+    background: #161b22 !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+  }
+  .leaflet-popup-tip { background: #161b22 !important; }
+}
+
+@layer components {
+  /* Card */
+  .card {
+    @apply bg-bg-secondary border border-border-default rounded-lg;
+  }
+  .card-elevated {
+    @apply bg-bg-elevated border border-border-default rounded-lg shadow-elevated;
+  }
+
+  /* Badge severity */
+  .badge-low      { @apply bg-severity-low-bg text-severity-low text-xs font-medium px-2 py-0.5 rounded; }
+  .badge-medium   { @apply bg-severity-medium-bg text-severity-medium text-xs font-medium px-2 py-0.5 rounded; }
+  .badge-high     { @apply bg-severity-high-bg text-severity-high text-xs font-medium px-2 py-0.5 rounded; }
+  .badge-critical { @apply bg-severity-critical-bg text-severity-critical text-xs font-medium px-2 py-0.5 rounded; }
+
+  /* Stat value */
+  .stat-value   { @apply text-2xl font-bold text-text-primary tabular-nums; }
+  .stat-label   { @apply text-xs text-text-secondary uppercase tracking-wider; }
+  .stat-change  { @apply text-xs font-medium; }
+
+  /* Input */
+  .input {
+    @apply w-full bg-bg-elevated border border-border-default rounded-md px-3 py-2
+           text-sm text-text-primary placeholder:text-text-muted
+           focus:outline-none focus:ring-1 focus:ring-accent-blue focus:border-accent-blue
+           transition-colors;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium
+           bg-accent-blue text-white hover:bg-blue-600 active:bg-blue-700
+           disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium
+           bg-bg-elevated border border-border-default text-text-primary
+           hover:bg-bg-hover disabled:opacity-50 transition-colors;
+  }
+  .btn-danger {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium
+           bg-severity-high text-white hover:bg-red-600 disabled:opacity-50 transition-colors;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm
+           text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors;
+  }
+
+  /* Table */
+  .table-wrapper { @apply overflow-x-auto rounded-lg border border-border-default; }
+  .table-base    { @apply w-full text-sm text-left; }
+  .table-head    { @apply text-text-secondary uppercase text-2xs tracking-wider border-b border-border-default; }
+  .table-th      { @apply px-4 py-3 font-medium; }
+  .table-td      { @apply px-4 py-3 text-text-primary; }
+  .table-row     { @apply border-b border-border-subtle hover:bg-bg-hover transition-colors; }
+
+  /* Sidebar nav item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm text-text-secondary
+           hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer;
+  }
+  .nav-item-active {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm
+           text-text-primary bg-bg-elevated border border-border-default font-medium;
+  }
+
+  /* Live indicator */
+  .live-dot {
+    @apply w-2 h-2 rounded-full bg-status-online animate-pulse-slow;
+  }
+}

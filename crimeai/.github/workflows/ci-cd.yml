@@ -1,0 +1,292 @@
+# ==============================================================================
+# CrimeAI – CI/CD Pipeline
+# .github/workflows/ci-cd.yml
+#
+# Triggers:
+#   - Push to main  → run tests → deploy to production
+#   - Push to dev   → run tests → deploy to staging
+#   - Pull request  → run tests only (no deploy)
+#
+# Secrets required (set in GitHub repo Settings → Secrets):
+#   RENDER_API_KEY          - Render.com API key
+#   RENDER_BACKEND_SVC_ID   - Render service ID for backend
+#   RENDER_WORKER_SVC_ID    - Render service ID for Celery worker
+#   VERCEL_TOKEN            - Vercel deploy token
+#   VERCEL_ORG_ID           - Vercel org ID
+#   VERCEL_PROJECT_ID       - Vercel project ID
+#   SENTRY_AUTH_TOKEN       - Sentry release tracking (optional)
+#   SENTRY_ORG              - Sentry org slug
+#   SENTRY_PROJECT          - Sentry project slug
+# ==============================================================================
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+
+  # ============================================================================
+  # Backend: Lint + Type Check + Tests
+  # ============================================================================
+  backend-ci:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgis/postgis:15-3.3
+        env:
+          POSTGRES_DB: crimeai_test
+          POSTGRES_USER: crimeai
+          POSTGRES_PASSWORD: crimeai_password
+        options: >-
+          --health-cmd "pg_isready -U crimeai -d crimeai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          python -m spacy download en_core_web_sm
+
+      - name: Enable PostGIS + pgvector extensions
+        env:
+          PGPASSWORD: crimeai_password
+        run: |
+          psql -h localhost -U crimeai -d crimeai_test -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          psql -h localhost -U crimeai -d crimeai_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h localhost -U crimeai -d crimeai_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+          psql -h localhost -U crimeai -d crimeai_test -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Lint with Ruff
+        run: ruff check . --output-format=github
+
+      - name: Format check with Ruff
+        run: ruff format . --check
+
+      - name: Type check with MyPy
+        run: mypy app/ --ignore-missing-imports
+
+      - name: Run Alembic migrations (test DB)
+        env:
+          ALEMBIC_DATABASE_URL: postgresql://crimeai:crimeai_password@localhost:5432/crimeai_test
+          DATABASE_URL: postgresql+asyncpg://crimeai:crimeai_password@localhost:5432/crimeai_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-for-ci-only-not-production
+          JWT_SECRET_KEY: test-jwt-key-for-ci-only-not-production
+          APP_ENV: development
+        run: alembic upgrade head
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://crimeai:crimeai_password@localhost:5432/crimeai_test
+          ALEMBIC_DATABASE_URL: postgresql://crimeai:crimeai_password@localhost:5432/crimeai_test
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+          SECRET_KEY: test-secret-key-for-ci-only-not-production
+          JWT_SECRET_KEY: test-jwt-key-for-ci-only-not-production
+          APP_ENV: development
+          DEBUG: true
+        run: |
+          pytest tests/ \
+            -v \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -n auto \
+            --timeout=60
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+  # ============================================================================
+  # Frontend: Lint + Type Check + Build
+  # ============================================================================
+  frontend-ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: https://crimeai-api.onrender.com
+          VITE_WS_URL: wss://crimeai-api.onrender.com
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 1
+
+  # ============================================================================
+  # Deploy Backend → Render (main branch only)
+  # ============================================================================
+  deploy-backend:
+    name: Deploy Backend → Render
+    runs-on: ubuntu-latest
+    needs: [backend-ci, frontend-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - name: Trigger Render deploy – Backend API
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_BACKEND_SVC_ID }}/deploys" \
+            -d '{"clearCache": false}'
+
+      - name: Trigger Render deploy – Celery Worker
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_WORKER_SVC_ID }}/deploys" \
+            -d '{"clearCache": false}'
+
+      - name: Wait for backend to be healthy
+        run: |
+          echo "Waiting for backend health check..."
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://crimeai-api.onrender.com/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Backend is healthy"
+              exit 0
+            fi
+            echo "Attempt $i: Status $STATUS, retrying in 30s..."
+            sleep 30
+          done
+          echo "❌ Backend health check failed after 10 minutes"
+          exit 1
+
+  # ============================================================================
+  # Deploy Frontend → Vercel (main branch only)
+  # ============================================================================
+  deploy-frontend:
+    name: Deploy Frontend → Vercel
+    runs-on: ubuntu-latest
+    needs: [backend-ci, frontend-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: "--prod"
+          working-directory: frontend
+
+  # ============================================================================
+  # Post-deploy: Sentry release tracking
+  # ============================================================================
+  sentry-release:
+    name: Sentry Release
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Sentry release
+        uses: getsentry/action-release@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        with:
+          environment: production
+          version: ${{ github.sha }}
+        continue-on-error: true  # Don't fail deploy if Sentry is down

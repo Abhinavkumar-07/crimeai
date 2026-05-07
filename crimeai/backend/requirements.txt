@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CrimeAI Backend — Python Dependencies
+# Pin major versions; allow patch updates
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9         # File uploads
+
+# ── Settings & validation ──────────────────────────────────────────────────────
+pydantic==2.9.2
+pydantic-settings==2.5.2
+pydantic[email]
+
+# ── Database ───────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.35
+asyncpg==0.29.0                 # Async PostgreSQL driver
+psycopg2-binary==2.9.9          # Sync driver (Alembic)
+alembic==1.13.3
+geoalchemy2==0.15.2             # PostGIS ORM types
+
+# ── Redis & Celery ────────────────────────────────────────────────────────────
+redis[hiredis]==5.1.1
+celery[redis]==5.4.0
+APScheduler==3.10.4
+
+# ── Authentication ────────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+slowapi==0.1.9
+
+# ── HTTP client (for external calls) ─────────────────────────────────────────
+httpx==0.27.2
+
+# ── ML / Data Science ─────────────────────────────────────────────────────────
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.5.2
+xgboost==2.1.1
+scipy==1.14.1
+joblib==1.4.2
+
+# ── NLP ──────────────────────────────────────────────────────────────────────
+spacy==3.8.2
+# HuggingFace for sentence embeddings (similarity engine)
+sentence-transformers==3.1.1
+transformers==4.45.1
+torch==2.4.1                    # CPU-only; remove +cpu suffix for GPU
+
+# ── Graph algorithms ──────────────────────────────────────────────────────────
+networkx==3.3
+
+# ── PDF generation ────────────────────────────────────────────────────────────
+reportlab==4.2.5
+
+# ── Storage (Supabase) ───────────────────────────────────────────────────────
+supabase==2.9.0
+
+# ── Logging & observability ───────────────────────────────────────────────────
+structlog==24.4.0
+sentry-sdk[fastapi]==2.14.0
+
+# ── Dev / testing (excluded from prod image via pip install --no-dev) ─────────
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==5.0.0
+httpx==0.27.2                   # Async test client (also prod dep)
+factory-boy==3.3.1              # Test fixtures
+faker==30.3.0                   # Fake data generation
+
+# ── Code quality ──────────────────────────────────────────────────────────────
+ruff==0.6.9
+mypy==1.11.2
