@@ -13,9 +13,7 @@ services:
       python -m spacy download en_core_web_sm
     startCommand: |
       alembic upgrade head &&
-      celery -A app.workers.celery_app:celery_app worker --loglevel=info --concurrency=1 &
-      celery -A app.workers.celery_app:celery_app beat --loglevel=info &
-      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
     envVars:
       - key: APP_ENV
         value: production
@@ -39,3 +37,49 @@ services:
         sync: false   # Set to your Vercel frontend URL
     healthCheckPath: /health
     autoDeploy: true
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  - type: worker
+    name: crimeai-worker
+    runtime: python
+    rootDir: crimeai/backend
+    buildCommand: |
+      pip install -r requirements.txt &&
+      python -m spacy download en_core_web_sm
+    startCommand: >
+      celery -A app.workers.celery_app:celery_app worker
+      --loglevel=info --concurrency=2 --queues=default,ml,nlp
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_SYNC
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+
+  # ── Celery Beat Scheduler ────────────────────────────────────────────────────
+  - type: worker
+    name: crimeai-beat
+    runtime: python
+    rootDir: crimeai/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      celery -A app.workers.celery_app:celery_app beat
+      --loglevel=info
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+
+
