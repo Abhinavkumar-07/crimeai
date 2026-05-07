@@ -7,7 +7,7 @@ services:
   - type: web
     name: crimeai-api
     runtime: python
-    rootDir: backend
+    rootDir: crimeai/backend
     buildCommand: |
       pip install -r requirements.txt &&
       python -m spacy download en_core_web_sm
@@ -42,7 +42,7 @@ services:
   - type: worker
     name: crimeai-worker
     runtime: python
-    rootDir: backend
+    rootDir: crimeai/backend
     buildCommand: |
       pip install -r requirements.txt &&
       python -m spacy download en_core_web_sm
@@ -67,7 +67,7 @@ services:
   - type: worker
     name: crimeai-beat
     runtime: python
-    rootDir: backend
+    rootDir: crimeai/backend
     buildCommand: pip install -r requirements.txt
     startCommand: >
       celery -A app.workers.celery_app:celery_app beat
