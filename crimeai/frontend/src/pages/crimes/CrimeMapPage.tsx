@@ -137,8 +137,8 @@ export default function CrimeMapPage() {
           <p className="text-lg font-bold text-text-primary">
             {crimesData?.total?.toLocaleString() ?? '—'}
           </p>
-          {clusterData?.num_clusters > 0 && (
-            <p className="text-2xs text-accent-blue">{clusterData.num_clusters} clusters</p>
+          {(clusterData?.num_clusters ?? 0) > 0 && (
+            <p className="text-2xs text-accent-blue">{clusterData?.num_clusters} clusters</p>
           )}
         </div>
 
